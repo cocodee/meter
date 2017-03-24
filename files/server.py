@@ -68,15 +68,41 @@ class TrainServerHandler(web.RequestHandler):
             im = cv2.imread(image)
             
             # 这个是矫正参数， 不同摄像头不同，现在可以用默认这个
-            calib_params = (0.960208, 0.245623, 37.7075, 80.1473, 9.04529, 1, 0.56, 0.5)
+            calib_params = (0.960208, 0.245623, 37.7075, 80.1473, 9.04529, -1, 0.56, 0.5)
             fid = uuid.uuid1()
             tmpname = 'tmp'+str(fid)
             # 识别
-            res, im = smart_reading(tmpname,im, 0.5, calib_params)
+            res, im = smart_reading(tmpname,im, 0.45, calib_params)
             res = res.split('\n')
+        except Exception as e:
+            res = ["0","0 "]
         finally:
             os.remove(image)
-        return {"display":res[0],"confidence":res[1]}
+
+        display_str = res[0]
+        display='00000000'
+        if display_str<>None and display_str<>'':
+            d1 = display_str.split(' ')
+            d2 = map(lambda x:x.strip(),d1)
+            d3 = filter(lambda x:x<>'',d2)
+            d4 = map(lambda x:x if x.find('/')==-1 else x[0],d3)
+            display = ''.join(d4)
+        if len(display)>8:
+            display = display[0:8]
+            res[1]='0'
+        elif len(display)<8:
+            display = (display + '00000000')[0:8]
+            res[1]='0'
+        confidence_str = res[1]
+        confidence='0'
+        if confidence_str<>None and confidence_str<>'':
+            a1 = confidence_str.split(' ')
+            a2 = map(lambda x:x.strip(),a1)
+            a3 = filter(lambda x:x<>'' and x<>'0',a2)
+            a4 = map(lambda x:float(x),a3)
+            if len(a4)>0:
+                confidence = min(a4)
+        return {"display":display,"confidence":confidence}
 
     def _parse_arguments(self):
         req = self.request
