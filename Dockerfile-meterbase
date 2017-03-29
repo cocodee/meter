@@ -1,0 +1,17 @@
+# base image conains the normal softwares
+FROM index.qiniu.com/library/ubuntu:16.04
+MAINTAINER cocodee <coco.dee@gmail.com>
+
+RUN apt-get update
+RUN apt-get install -y libboost-dev libboost-thread-dev libboost-system-dev libboost-python-dev libjsoncpp-dev libcurl4-openssl-dev
+
+RUN apt-get install -y wget
+
+RUN apt-get install python 
+COPY files/* /workspace/
+RUN python /workspace/get-pip.py
+
+RUN pip install tornado --index-url https://pypi.tuna.tsinghua.edu.cn/simple
+
+WORKDIR /workspace
+CMD python ./server.py 
