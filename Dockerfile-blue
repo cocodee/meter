@@ -1,0 +1,9 @@
+# base image conains the normal softwares
+FROM index.qiniu.com/ataraxia/meterbase:v0.0.1
+MAINTAINER cocodee <coco.dee@gmail.com>
+
+RUN apt-get update
+RUN pip install requests --index-url https://pypi.tuna.tsinghua.edu.cn/simple
+COPY blue-files/* /workspace/
+WORKDIR /workspace
+CMD python ./server.py 
