@@ -1,15 +1,13 @@
 # coding=utf-8
-from pyasiaocr import smart_reading
+from pyasiaocr import smart_reading_analog_electric
 import cv2
 
 if __name__ == '__main__':
-    im = cv2.imread('10000004_22_20170115203356.jpg')
+    im = cv2.imread('T1AaETB7Ev1RCvBVdK.jpg')
 
-    # 这个是矫正参数， 不同摄像头不同，现在可以用默认这个
-    calib_params = (0.960208, 0.245623, 37.7075, 80.1473, 9.04529, 1, 0.56, 0.5)
 
     # 识别
-    res, im = smart_reading(im, 0.5, calib_params)
+    res, im = smart_reading_analog_electric("test",im, ((48, 65), (200, 55)),6,0.4)
     res = res.split('\n')
 
     print 'result:',  res[0]

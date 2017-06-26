@@ -5,5 +5,7 @@ MAINTAINER cocodee <coco.dee@gmail.com>
 COPY files/* /workspace/
 RUN apt-get install -y libcv-dev
 RUN apt-get install -y python-opencv  python-numpy vim
+RUN pip install requests --index-url https://pypi.tuna.tsinghua.edu.cn/simple
+RUN pip install qiniu
 WORKDIR /workspace
 CMD python ./server.py 
