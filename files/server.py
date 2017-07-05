@@ -18,6 +18,7 @@ from StorageApi import QiniuStorage
 from uuid import uuid1
 import multiprocessing
 from datetime import datetime
+import monitor
 _log = None
 
 INTERNAL_SERVER_ERROR = 500
