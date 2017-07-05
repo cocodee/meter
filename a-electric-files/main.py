@@ -3,7 +3,7 @@ from pyasiaocr import smart_reading_analog_electric
 import cv2
 
 if __name__ == '__main__':
-    im = cv2.imread('T1AaETB7Ev1RCvBVdK.jpg')
+    im = cv2.imread('1.jpg')
 
 
     # 识别
