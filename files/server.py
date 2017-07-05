@@ -18,7 +18,11 @@ from StorageApi import QiniuStorage
 from uuid import uuid1
 import multiprocessing
 from datetime import datetime
-import monitor
+import tornado
+from tornado.concurrent import run_on_executor
+# 这个并发库在python3自带在python2需要安装sudo pip install futures
+from concurrent.futures import ThreadPoolExecutor
+
 _log = None
 
 INTERNAL_SERVER_ERROR = 500
@@ -56,13 +60,17 @@ class App(object):
         signal.signal(signal.SIGHUP, _eval_close)
     
 class TrainServerHandler(web.RequestHandler):
+    executor = ThreadPoolExecutor(4)
+
     def initialize(self,app):
         self.app = app
 
+    @tornado.web.asynchronous
+    @tornado.gen.coroutine
     def post(self):    
         try:
             req_args = self._parse_arguments()
-            result = self._read_meter(req_args['image'])
+            result = yield self._read_meter(req_args['image'])
             self.write(errors.create_success(result['display'],result['confidence']))
             return
         except Exception as e:
@@ -70,6 +78,7 @@ class TrainServerHandler(web.RequestHandler):
             self.write(errors.create_error(INTERNAL_SERVER_ERROR,'FAIL',e.message))
             return           
 
+    @run_on_executor
     def _read_meter(self,image):
         try:
             im = cv2.imread(image)
@@ -79,12 +88,16 @@ class TrainServerHandler(web.RequestHandler):
             fid = uuid.uuid1()
             tmpname = 'tmp'+str(fid)
             # 识别
-            res, im = smart_reading(tmpname,im, 0.45, calib_params)
+            res, im = smart_reading(tmpname,im, 0.4, calib_params)
             res = res.split('\n')
         except Exception as e:
             res = ["0","0 "]
         finally:
-            self.app.q_in.put_nowait(image)
+            print('put '+image)
+            try:
+                self.app.q_in.put_nowait(image)
+            except:
+                os.remove(image)
 
         display_str = res[0]
         display='00000000'
@@ -143,8 +156,10 @@ def main(config):
 
 def upload(qapi,bucket,q_in,mainlog):
     while True:
+        print('upload thread')
         file_name = q_in.get()
         mainlog.info("get %s",file_name)
+        print(file_name)
         if file_name is None:
             break
         id = uuid1()
