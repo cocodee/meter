@@ -1,0 +1,561 @@
+diff --git a/Dockerfile b/Dockerfile
+index 11a31bc..b700c1a 100644
+--- a/Dockerfile
++++ b/Dockerfile
+@@ -1,13 +1,8 @@
+ # base image conains the normal softwares
+-FROM index.qiniu.com/ataraxia/meterbase:v0.0.1
++FROM index.qiniu.com/ataraxia/meterbase:v0.0.2
+ MAINTAINER cocodee <coco.dee@gmail.com>
+ 
++RUN apt-get install -y python-concurrent.futures
+ COPY files/* /workspace/
+-RUN sed -i s/archive.ubuntu.com/mirrors.163.com/g /etc/apt/sources.list
+-RUN apt-get update
+-RUN apt-get install -y libcv-dev
+-RUN apt-get install -y python-opencv  python-numpy vim
+-RUN pip install requests --index-url https://pypi.tuna.tsinghua.edu.cn/simple
+-RUN pip install qiniu
+ WORKDIR /workspace
+ CMD python ./server.py 
+diff --git a/Dockerfile-a-electric b/Dockerfile-a-electric
+index 7bea942..d514df2 100644
+--- a/Dockerfile-a-electric
++++ b/Dockerfile-a-electric
+@@ -1,13 +1,8 @@
+ # base image conains the normal softwares
+-FROM index.qiniu.com/ataraxia/meterbase:v0.0.1
++FROM index.qiniu.com/ataraxia/meterbase:v0.0.2
+ MAINTAINER cocodee <coco.dee@gmail.com>
+ 
+-RUN sed -i s/archive.ubuntu.com/mirrors.163.com/g /etc/apt/sources.list
+-RUN apt-get update
++RUN apt-get install -y python-concurrent.futures
+ COPY a-electric-files/* /workspace/
+-RUN apt-get install -y libcv-dev
+-RUN apt-get install -y python-opencv  python-numpy vim
+-RUN pip install requests --index-url https://pypi.tuna.tsinghua.edu.cn/simple
+-RUN pip install qiniu
+ WORKDIR /workspace
+ CMD python ./server.py 
+diff --git a/Dockerfile-electric b/Dockerfile-electric
+index c6c1115..f426232 100644
+--- a/Dockerfile-electric
++++ b/Dockerfile-electric
+@@ -1,11 +1,8 @@
+ # base image conains the normal softwares
+-FROM index.qiniu.com/ataraxia/meterbase:v0.0.1
++FROM index.qiniu.com/ataraxia/meterbase:v0.0.2
+ MAINTAINER cocodee <coco.dee@gmail.com>
+ 
+-RUN sed -i s/archive.ubuntu.com/mirrors.163.com/g /etc/apt/sources.list
+-RUN apt-get update
++RUN apt-get install -y python-concurrent.futures
+ COPY electric-files/* /workspace/
+-RUN apt-get install -y libcv-dev
+-RUN apt-get install -y python-opencv  python-numpy vim
+ WORKDIR /workspace
+ CMD python ./server.py 
+diff --git a/a-electric-files/doc.md b/a-electric-files/doc.md
+index 28053ba..c2555ed 100644
+--- a/a-electric-files/doc.md
++++ b/a-electric-files/doc.md
+@@ -1 +1,2 @@
+ curl -X POST -F "image=@1.jpeg" http://61.153.154.143:8888/analog-electric
++curl -X POST -F "image=@1.jpeg" http://127.0.0.1:8888/analog-electric
+diff --git a/a-electric-files/main.py b/a-electric-files/main.py
+index b71558f..2fa15a9 100644
+--- a/a-electric-files/main.py
++++ b/a-electric-files/main.py
+@@ -7,7 +7,7 @@ if __name__ == '__main__':
+ 
+ 
+     # 识别
+-    res, im = smart_reading_analog_electric("test",im, ((48, 65), (200, 55)),6,0.4)
++    res, im = smart_reading_analog_electric("a", im, ((0, 0), (im.shape[1], im.shape[0])), 6, 0.6)
+     res = res.split('\n')
+ 
+     print 'result:',  res[0]
+diff --git a/a-electric-files/pyasiaocr.so b/a-electric-files/pyasiaocr.so
+index 660360f..46b4cc6 100755
+Binary files a/a-electric-files/pyasiaocr.so and b/a-electric-files/pyasiaocr.so differ
+diff --git a/a-electric-files/server.py b/a-electric-files/server.py
+index 20a43ff..a70c947 100644
+--- a/a-electric-files/server.py
++++ b/a-electric-files/server.py
+@@ -1,5 +1,6 @@
+ # coding=utf-8
+ from pyasiaocr import smart_reading_analog_electric
++from pyasiaocr import set_domain
+ import cv2
+ 
+ import logging
+@@ -18,26 +19,34 @@ from StorageApi import QiniuStorage
+ from uuid import uuid1
+ import multiprocessing
+ from datetime import datetime
+-_log = None
++import tornado
++from tornado.concurrent import run_on_executor
++# 这个并发库在python3自带在python2需要安装sudo pip install futures
++from concurrent.futures import ThreadPoolExecutor
++
++_log=None
+ 
+ INTERNAL_SERVER_ERROR = 500
+ class App(object):
+     def __init__(self,config,q_in):
+-        self.business_name = 'analog-electric'
+         self.count = 0
+         self._init_config()
+         self.config = config
+         self.q_in = q_in
++        set_domain('http://yon4rccs.nq.cloudappl.com')
+         pass
+ 
+     def _init_config(self):
+         log.init(log.PROD)
+-        _log = log.get_log(self.business_name)
++        _log = log.get_log("meter server")
++        _log.info("test")
+ 
+ 
+     def run(self):
+         settings = dict()
+-        app = web.Application([('/'+self.business_name,TrainServerHandler,dict(app=self))],**settings)
++        app = web.Application([('/analog-electric',AnalogElectricServerHandler,dict(app=self)),
++                               ('/electric',ElectricServerHandler,dict(app=self)),
++                               ('/meter/submit ',ElectricServerHandler,dict(app=self)),],**settings)
+         app.listen(self.config['port'])
+         self.__init_signal(app)
+         ioloop.IOLoop.current().start()
+@@ -54,21 +63,29 @@ class App(object):
+         signal.signal(signal.SIGINT, _int_handler)
+         signal.signal(signal.SIGHUP, _eval_close)
+     
+-class TrainServerHandler(web.RequestHandler):
++class AnalogElectricServerHandler(web.RequestHandler):
++    executor = ThreadPoolExecutor(4)
++
+     def initialize(self,app):
+         self.app = app
++        self.handlerlog = log.get_log("handler")
+ 
++    @tornado.web.asynchronous
++    @tornado.gen.coroutine
+     def post(self):    
+         try:
++            self.handlerlog.info("begin request")
+             req_args = self._parse_arguments()
+-            result = self._read_meter(req_args['image'])
++            result = yield self._read_meter(req_args['image'])
+             self.write(errors.create_success(result['display'],result['confidence']))
+             return
+         except Exception as e:
++            self.handlerlog.error(e)
+             self.set_status(INTERNAL_SERVER_ERROR)
+             self.write(errors.create_error(INTERNAL_SERVER_ERROR,'FAIL',e.message))
+             return           
+ 
++    @run_on_executor
+     def _read_meter(self,image):
+         try:
+             im = cv2.imread(image)
+@@ -76,13 +93,23 @@ class TrainServerHandler(web.RequestHandler):
+             fid = uuid.uuid1()
+             tmpname = 'tmp'+str(fid)
+             # 识别
+-            res, im = smart_reading_analog_electric(tmpname,im,((48, 65), (200, 55)),6,0.4)
++            res, im = smart_reading_analog_electric("a", im, ((0, 0), (im.shape[1], im.shape[0])), 6, 0.6)
++            if "error" in res:
++                raise Exception("service error.")
+             res = res.split('\n')
++            self.handlerlog.info("res from aisainfo")
++            self.handlerlog.info(res)
++            if len(res)<2:
++                raise Exception("service return length less than 2")
+         except Exception as e:
+-            print(e)
++            self.handlerlog.error(e)
+             res = ["0","0 "]
+         finally:
+-            self.app.q_in.put_nowait(image)
++            try:
++                self.app.q_in.put_nowait(image)
++            except:
++                os.remove(image)
++
+         allzero = '000000'
+         resultlength = 6
+         display_str = res[0]
+@@ -108,7 +135,10 @@ class TrainServerHandler(web.RequestHandler):
+             a4 = map(lambda x:float(x),a3)
+             if len(a4)>0:
+                 confidence = min(a4)
+-        return {"display":display,"confidence":confidence}
++        if confidence<0.0001:
++            confidence=int(confidence)
++        self.handlerlog.info("complete request")
++        return {"display":display,"confidence":str(confidence)}
+ 
+     def _parse_arguments(self):
+         req = self.request
+@@ -126,6 +156,7 @@ class TrainServerHandler(web.RequestHandler):
+         temp_name = 'meter_'+str(id)
+         return temp_name
+ 
++
+ def main(config):
+     log.init(log.PROD)
+     mainlog = log.get_log("gas-main")
+@@ -148,7 +179,7 @@ def upload(qapi,bucket,q_in,mainlog):
+             break
+         id = uuid1()
+         now = datetime.now()
+-        key = now.strftime("%Y-%m-%d")+"/"+str(id)+".jpg"
++        key = now.strftime("%Y-%m-%d")+"/"+file_name+"/"+str(id)+".jpg"
+         ret = qapi.upload(bucket,key,file_name)
+         if ret =="fail":
+             mainlog.error('upload file failed')
+diff --git a/electric-files/doc.md b/electric-files/doc.md
+index 4cdf38b..34fa1d2 100644
+--- a/electric-files/doc.md
++++ b/electric-files/doc.md
+@@ -1 +1,3 @@
+-curl -X POST -F "image=@13.jpg" http://61.153.154.178:8888/electric
++curl -X POST -F "image=@1.jpg" http://61.153.154.178:8888/electric
++
++curl -X POST -F "image=@1.jpg" http://127.0.0.1:8888/electric
+diff --git a/electric-files/pyasiaocr.so b/electric-files/pyasiaocr.so
+index 47eec63..06d6fd9 100755
+Binary files a/electric-files/pyasiaocr.so and b/electric-files/pyasiaocr.so differ
+diff --git a/electric-files/server.py b/electric-files/server.py
+index 216c4e5..58de8fb 100644
+--- a/electric-files/server.py
++++ b/electric-files/server.py
+@@ -1,6 +1,7 @@
+ # coding=utf-8
+ from pyasiaocr import smart_reading
+ from pyasiaocr import smart_reading_elec_meter
++from pyasiaocr import set_domain
+ import cv2
+ 
+ import logging
+@@ -14,15 +15,27 @@ import errors
+ import time
+ import uuid
+ import os
++import ConfigParser
++from StorageApi import QiniuStorage
++from uuid import uuid1
++import multiprocessing
++from datetime import datetime
++import tornado
++from tornado.concurrent import run_on_executor
++# 这个并发库在python3自带在python2需要安装sudo pip install futures
++from concurrent.futures import ThreadPoolExecutor
++
+ _log = None
+ 
+ INTERNAL_SERVER_ERROR = 500
+ class App(object):
+-    def __init__(self,config):
++    def __init__(self,config,q_in):
+         self.business_name = 'electric'
+         self.count = 0
+         self._init_config()
+         self.config = config
++        self.q_in = q_in
++        set_domain('http://yon4rccs.nq.cloudappl.com')
+         pass
+ 
+     def _init_config(self):
+@@ -50,13 +63,17 @@ class App(object):
+         signal.signal(signal.SIGHUP, _eval_close)
+     
+ class TrainServerHandler(web.RequestHandler):
++    executor = ThreadPoolExecutor(4)
++
+     def initialize(self,app):
+         self.app = app
+ 
++    @tornado.web.asynchronous
++    @tornado.gen.coroutine
+     def post(self):    
+         try:
+             req_args = self._parse_arguments()
+-            result = self._read_meter(req_args['image'])
++            result = yield self._read_meter(req_args['image'])
+             self.write(errors.create_success(result['display'],result['confidence'],result["type"]))
+             return
+         except Exception as e:
+@@ -64,6 +81,7 @@ class TrainServerHandler(web.RequestHandler):
+             self.write(errors.create_error(INTERNAL_SERVER_ERROR,'FAIL',e.message))
+             return           
+ 
++    @run_on_executor
+     def _read_meter(self,image):
+         try:
+             im = cv2.imread(image)
+@@ -72,12 +90,19 @@ class TrainServerHandler(web.RequestHandler):
+             tmpname = 'tmp'+str(fid)
+             # 识别
+             res, im = smart_reading_elec_meter(tmpname,im, 0.5)
++            if "error" in res:
++                raise Exception("service error.")
+             res = res.split('\n')
+         except Exception as e:
+             print(e)
+             res = ["0","0"]
+         finally:
+-            os.remove(image)
++            print('put '+image)
++            try:
++                self.app.q_in.put_nowait(image)
++            except:
++                os.remove(image)
++
+         print(res)
+         display_str = res[0]
+         if display_str<>None and display_str<>'':
+@@ -88,7 +113,8 @@ class TrainServerHandler(web.RequestHandler):
+             #d4 = map(lambda x:x if x.find('/')==-1 else x[0],d3)
+             print(d3)
+             display = ''.join(d3)
+-        
++        else:
++            display = '0'
+         confidence_str = res[1]
+         confidence='0'
+         if confidence_str<>None and confidence_str<>'':
+@@ -122,11 +148,52 @@ class TrainServerHandler(web.RequestHandler):
+         id = uuid.uuid1()
+         temp_name = 'meter_'+str(id)
+         return temp_name
+-def main():
++
++def upload(qapi,bucket,q_in,mainlog):
++    while True:
++        print('upload thread')
++        file_name = q_in.get()
++        mainlog.info("get %s",file_name)
++        print(file_name)
++        if file_name is None:
++            break
++        id = uuid1()
++        now = datetime.now()
++        key = now.strftime("%Y-%m-%d")+"/"+str(id)+".jpg"
++        ret = qapi.upload(bucket,key,file_name)
++        if ret =="fail":
++            print('upload file failed')
++            mainlog.error('upload file failed')
++        os.remove(file_name)
++
++
++def main(config):
+     args = parse_command_line()
+-    config={'port':8888}
+-    app = App(config)
++    mainlog = log.get_log("electric-main")
++
++    qapi = QiniuStorage(config["ak"],config["sk"])
++    queue = multiprocessing.Queue(1000)
++    uploadProcess = multiprocessing.Process(target=upload,args=(qapi,config["bucket"],queue,mainlog))
++    uploadProcess.start()
++
++    app = App(config,queue)
+     app.run()
++    queue.close()
++    uploadProcess.join()
++
+ 
+ if __name__ == '__main__':
+-    main()
++    cf = ConfigParser.ConfigParser()
++    cf.read("./cf.ini")
++    ak = cf.get("secret","ak")
++    sk = cf.get("secret","sk")
++    bucket = cf.get("storage","bucket")
++    port = cf.get("web","port")
++    config = {
++        "port":int(port),
++        "ak":ak,
++        "sk":sk,
++        "bucket":bucket
++    }
++    print(config)
++    main(config)
+diff --git a/files/doc.md b/files/doc.md
+index 4655cc0..a7e5f0d 100644
+--- a/files/doc.md
++++ b/files/doc.md
+@@ -1 +1,4 @@
+-curl -X POST -F "image=@1.jpg" http://61.153.154.159:8888/meter/submit
++curl -X POST -F "image=@1.jpg" http://61.153.154.159:8888/meter2/submit
++curl -X POST -F "image=@1.jpg" http://127.0.0.1:8888/meter2/submit
++curl -X POST -F "image=@3.jpg" http://61.153.154.159:8888/meter/submit
++curl -X POST -F "image=@3.jpg" http://127.0.0.1:8888/meter/submit
+diff --git a/files/main.py b/files/main.py
+index 887639e..eb3e6bf 100644
+--- a/files/main.py
++++ b/files/main.py
+@@ -1,5 +1,5 @@
+ # coding=utf-8
+-from pyasiaocr import smart_reading
++from pyasiaocr import smart_reading_analog_electric
+ import cv2
+ import sys
+ 
+@@ -15,7 +15,7 @@ if __name__ == '__main__':
+ 
+     # 识别
+     print 'reading'
+-    res, im = smart_reading("temp",im, 0.5, calib_params)
++    res, im = smart_reading_analog_electric("a", im, ((0, 0), (im.shape[1], im.shape[0])), 8, 0.6)
+     res = res.split('\n')
+     print 'reading complete'
+     print 'result:',  res[0]
+diff --git a/files/pyasiaocr.so b/files/pyasiaocr.so
+index b9247fe..46b4cc6 100755
+Binary files a/files/pyasiaocr.so and b/files/pyasiaocr.so differ
+diff --git a/files/server.py b/files/server.py
+index 906e5a8..d6665c4 100644
+--- a/files/server.py
++++ b/files/server.py
+@@ -1,5 +1,7 @@
+ # coding=utf-8
+ from pyasiaocr import smart_reading
++from pyasiaocr import set_domain
++from pyasiaocr import smart_reading_analog_electric
+ import cv2
+ 
+ import logging
+@@ -28,11 +30,12 @@ _log = None
+ INTERNAL_SERVER_ERROR = 500
+ class App(object):
+     def __init__(self,config,q_in):
+-        self.business_name = 'meter/submit'
++        self.business_name = 'meter2/submit'
+         self.count = 0
+         self._init_config()
+         self.config = config
+         self.q_in = q_in
++        set_domain('http://yon4rccs.nq.cloudappl.com')
+         pass
+ 
+     def _init_config(self):
+@@ -42,7 +45,7 @@ class App(object):
+ 
+     def run(self):
+         settings = dict()
+-        app = web.Application([('/'+self.business_name,TrainServerHandler,dict(app=self))],**settings)
++        app = web.Application([('/'+self.business_name,TrainServerHandler,dict(app=self)),('/meter/submit',Gas2ServerHandler,dict(app=self))],**settings)
+         app.listen(self.config['port'])
+         self.__init_signal(app)
+         ioloop.IOLoop.current().start()
+@@ -89,6 +92,8 @@ class TrainServerHandler(web.RequestHandler):
+             tmpname = 'tmp'+str(fid)
+             # 识别
+             res, im = smart_reading(tmpname,im, 0.4, calib_params)
++            if "error" in res:
++                raise Exception("service error.")
+             res = res.split('\n')
+         except Exception as e:
+             res = ["0","0 "]
+@@ -122,7 +127,7 @@ class TrainServerHandler(web.RequestHandler):
+             a4 = map(lambda x:float(x),a3)
+             if len(a4)>0:
+                 confidence = min(a4)
+-        return {"display":display,"confidence":confidence}
++        return {"display":display,"confidence":str(confidence)}
+ 
+     def _parse_arguments(self):
+         req = self.request
+@@ -140,6 +145,87 @@ class TrainServerHandler(web.RequestHandler):
+         temp_name = 'meter_'+str(id)
+         return temp_name
+ 
++
++class Gas2ServerHandler(web.RequestHandler):
++    executor = ThreadPoolExecutor(4)
++
++    def initialize(self,app):
++        self.app = app
++
++    @tornado.web.asynchronous
++    @tornado.gen.coroutine
++    def post(self):    
++        try:
++            req_args = self._parse_arguments()
++            result = yield self._read_meter(req_args['image'])
++            self.write(errors.create_success(result['display'],result['confidence']))
++            return
++        except Exception as e:
++            self.set_status(INTERNAL_SERVER_ERROR)
++            self.write(errors.create_error(INTERNAL_SERVER_ERROR,'FAIL',e.message))
++            return           
++
++    @run_on_executor
++    def _read_meter(self,image):
++        try:
++            im = cv2.imread(image)
++            
++            fid = uuid.uuid1()
++            tmpname = 'tmp'+str(fid)
++            # 识别
++            res, im = smart_reading_analog_electric("a", im, ((0, 0), (im.shape[1], im.shape[0])), 8, 0.6)
++            if "error" in res:
++                raise Exception("service error.")
++            res = res.split('\n')
++        except Exception as e:
++            res = ["0","0 "]
++        finally:
++            print('put '+image)
++            try:
++                self.app.q_in.put_nowait(image)
++            except:
++                os.remove(image)
++
++        display_str = res[0]
++        display='00000000'
++        if display_str<>None and display_str<>'':
++            d1 = display_str.split(' ')
++            d2 = map(lambda x:x.strip(),d1)
++            d3 = filter(lambda x:x<>'',d2)
++            d4 = map(lambda x:x if x.find('/')==-1 else x[0],d3)
++            display = ''.join(d4)
++        if len(display)>8:
++            display = display[0:8]
++            res[1]='0'
++        elif len(display)<8:
++            display = (display + '00000000')[0:8]
++            res[1]='0'
++        confidence_str = res[1]
++        confidence='0'
++        if confidence_str<>None and confidence_str<>'':
++            a1 = confidence_str.split(' ')
++            a2 = map(lambda x:x.strip(),a1)
++            a3 = filter(lambda x:x<>'' and x<>'0',a2)
++            a4 = map(lambda x:float(x),a3)
++            if len(a4)>0:
++                confidence = min(a4)
++        return {"display":display,"confidence":str(confidence)}
++
++    def _parse_arguments(self):
++        req = self.request
++        images = self.request.files.get('image')
++        if not (images!=None and len(images)>0):
++            raise Exception('no image attached')
++            return
++        tempfilename = self._create_tempfilename()
++        with open(tempfilename,'w') as fout:
++            fout.write(images[0]['body'])
++        return {"image":tempfilename}
++
++    def _create_tempfilename(self):
++        id = uuid.uuid1()
++        temp_name = 'meter_'+str(id)
++        return temp_name
+ def main(config):
+     log.init(log.PROD)
+     mainlog = log.get_log("gas-main")

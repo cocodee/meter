@@ -3,6 +3,7 @@ FROM index.qiniu.com/ataraxia/meterbase:v0.0.2
 MAINTAINER cocodee <coco.dee@gmail.com>
 
 RUN apt-get install -y python-concurrent.futures
-COPY files/* /workspace/
+RUN pip install prometheus_client
+COPY meter-files/* /workspace/
 WORKDIR /workspace
 CMD python ./server.py 

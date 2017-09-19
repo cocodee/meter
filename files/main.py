@@ -1,5 +1,5 @@
 # coding=utf-8
-from pyasiaocr import smart_reading
+from pyasiaocr import smart_reading_analog_electric
 import cv2
 import sys
 
@@ -15,7 +15,7 @@ if __name__ == '__main__':
 
     # 识别
     print 'reading'
-    res, im = smart_reading("temp",im, 0.5, calib_params)
+    res, im = smart_reading_analog_electric("a", im, ((0, 0), (im.shape[1], im.shape[0])), 8, 0.6)
     res = res.split('\n')
     print 'reading complete'
     print 'result:',  res[0]

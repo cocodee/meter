@@ -1,5 +1,6 @@
 # coding=utf-8
 from pyasiaocr import smart_reading_analog_electric
+from pyasiaocr import set_domain
 import cv2
 
 import logging
@@ -18,7 +19,12 @@ from StorageApi import QiniuStorage
 from uuid import uuid1
 import multiprocessing
 from datetime import datetime
-_log = None
+import tornado
+from tornado.concurrent import run_on_executor
+# 这个并发库在python3自带在python2需要安装sudo pip install futures
+from concurrent.futures import ThreadPoolExecutor
+
+_log=None
 
 INTERNAL_SERVER_ERROR = 500
 class App(object):
@@ -28,11 +34,13 @@ class App(object):
         self._init_config()
         self.config = config
         self.q_in = q_in
+        set_domain('http://yon4rccs.nq.cloudappl.com')
         pass
 
     def _init_config(self):
         log.init(log.PROD)
         _log = log.get_log(self.business_name)
+        _log.info("test")
 
 
     def run(self):
@@ -55,20 +63,28 @@ class App(object):
         signal.signal(signal.SIGHUP, _eval_close)
     
 class TrainServerHandler(web.RequestHandler):
+    executor = ThreadPoolExecutor(4)
+
     def initialize(self,app):
         self.app = app
+        self.handlerlog = log.get_log("handler")
 
+    @tornado.web.asynchronous
+    @tornado.gen.coroutine
     def post(self):    
         try:
+            self.handlerlog.info("begin request")
             req_args = self._parse_arguments()
-            result = self._read_meter(req_args['image'])
+            result = yield self._read_meter(req_args['image'])
             self.write(errors.create_success(result['display'],result['confidence']))
             return
         except Exception as e:
+            self.handlerlog.error(e)
             self.set_status(INTERNAL_SERVER_ERROR)
             self.write(errors.create_error(INTERNAL_SERVER_ERROR,'FAIL',e.message))
             return           
 
+    @run_on_executor
     def _read_meter(self,image):
         try:
             im = cv2.imread(image)
@@ -76,13 +92,23 @@ class TrainServerHandler(web.RequestHandler):
             fid = uuid.uuid1()
             tmpname = 'tmp'+str(fid)
             # 识别
-            res, im = smart_reading_analog_electric(tmpname,im,((48, 65), (200, 55)),6,0.4)
+            res, im = smart_reading_analog_electric("a", im, ((0, 0), (im.shape[1], im.shape[0])), 6, 0.6)
+            if "error" in res:
+                raise Exception("service error.")
             res = res.split('\n')
+            self.handlerlog.info("res from aisainfo")
+            self.handlerlog.info(res)
+            if len(res)<2:
+                raise Exception("service return length less than 2")
         except Exception as e:
-            print(e)
+            self.handlerlog.error(e)
             res = ["0","0 "]
         finally:
-            self.app.q_in.put_nowait(image)
+            try:
+                self.app.q_in.put_nowait(image)
+            except:
+                os.remove(image)
+
         allzero = '000000'
         resultlength = 6
         display_str = res[0]
@@ -108,7 +134,10 @@ class TrainServerHandler(web.RequestHandler):
             a4 = map(lambda x:float(x),a3)
             if len(a4)>0:
                 confidence = min(a4)
-        return {"display":display,"confidence":confidence}
+        if confidence<0.0001:
+            confidence=int(confidence)
+        self.handlerlog.info("complete request")
+        return {"display":display,"confidence":str(confidence)}
 
     def _parse_arguments(self):
         req = self.request
@@ -125,6 +154,7 @@ class TrainServerHandler(web.RequestHandler):
         id = uuid.uuid1()
         temp_name = 'meter_'+str(id)
         return temp_name
+
 
 def main(config):
     log.init(log.PROD)
@@ -148,7 +178,7 @@ def upload(qapi,bucket,q_in,mainlog):
             break
         id = uuid1()
         now = datetime.now()
-        key = now.strftime("%Y-%m-%d")+"/"+str(id)+".jpg"
+        key = now.strftime("%Y-%m-%d")+"/"+file_name+"/"+str(id)+".jpg"
         ret = qapi.upload(bucket,key,file_name)
         if ret =="fail":
             mainlog.error('upload file failed')
