@@ -35,7 +35,7 @@ class App(object):
         self._init_config()
         self.config = config
         self.q_in = q_in
-        set_domain('http://yon4rccs.nq.cloudappl.com')
+        set_domain('http://lightbox1.k8s-xs.qiniu.io')
         pass
 
     def _init_config(self):
